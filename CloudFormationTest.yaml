@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Example CloudFormation Template with EC2, IAM, and RDS
+
+Resources:
+
+  MyIAMRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Description: 'This is the role for the EC2 instance'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonSSMManagedEC2InstanceDefaultPolicy
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      MaxSessionDuration: 3600
+      RoleName: AndresCabralReyes
+      Tags: 
+        - Key: 'Name'
+          Value: 'Role-for-EC2-instance'
+
+  MyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DeletionPolicy: Delete
+    Properties:
+      InstanceProfileName: AndresCabral
+      Roles: 
+        - !Ref MyIAMRole
+
+  MyVPC4CloudFormation:
+    Type: AWS::EC2::VPC
+    DeletionPolicy: Delete
+    Properties:
+      CidrBlock: '10.0.3.0/24'
+      Tags: 
+        - Key: 'Name'
+          Value: 'VPC-for-CloudFormation'
+
+  MySubnet4CloudFormation:
+    Type: AWS::EC2::Subnet
+    DeletionPolicy: Delete
+    Properties:
+      VpcId: !Ref MyVPC4CloudFormation
+      CidrBlock: '10.0.3.0/24'
+      AvailabilityZone: 'us-west-1a'
+      Tags: 
+        - Key: 'Name'
+          Value: 'Subnet-for-CloudFormation'
+
+  #Create a security group for the EC2 instance
+  MyEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: MyVPC4CloudFormation # Ensure VPC is created before the instance
+    DeletionPolicy: Delete
+    Properties:
+      GroupDescription: 'This SG is explicitly for the EC2 instance and all the security rules assigned to it'
+      GroupName: 'security-group-for-EC2-instance'
+      VpcId: !Ref MyVPC4CloudFormation
+      # Define all egress rules inline here
+      SecurityGroupEgress:
+        - Description: 'Allow outbound traffic to all'
+          CidrIp: '0.0.0.0/0'
+          IpProtocol: '-1'
+        - Description: 'Allow outbound MySQL/Aurora traffic to the RDS instance'
+          FromPort: 3306
+          ToPort: 3306
+          IpProtocol: 'tcp'
+          CidrIp: '0.0.0.0/0'
+      # Define all ingress rules inline here
+      SecurityGroupIngress:
+        - Description: 'Allow SSH traffic from my local IP to the EC2 instance'
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: 'tcp'
+          CidrIp: '177.240.101.188/32'
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - MyInstanceProfile
+      - MyEC2SecurityGroup
+      - MySubnet4CloudFormation
+    DeletionPolicy: Delete
+    Properties:
+      AvailabilityZone: 'us-west-1a'
+      IamInstanceProfile: !Ref MyInstanceProfile
+      ImageId: 'ami-030cafc5c49b80d00' # Example valid AMI for us-west-1
+      InstanceInitiatedShutdownBehavior: 'terminate'
+      InstanceType: 't2.micro'
+      KeyName: 'Key-pair-4-CloudFormation'
+      SecurityGroupIds: 
+        - !Ref MyEC2SecurityGroup
+      SubnetId: !Ref MySubnet4CloudFormation
+      Tags: 
+        - Key: 'Name'
+          Value: 'EC2-for-CloudFormation'
+    MyVPCEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        DnsOptions: 
+          DnsOptionsSpecification
+        IpAddressType: String
+        PolicyDocument: Json
+        PrivateDnsEnabled: Boolean
+        ResourceConfigurationArn: String
+        RouteTableIds: 
+          - String
+        SecurityGroupIds: 
+          - String
+        ServiceName: !Ref MyVPC4CloudFormation
+        ServiceNetworkArn: String
+        ServiceRegion: String
+        SubnetIds: 
+          - String
+        Tags: 
+          - Tag
+        VpcEndpointType: String
+        VpcId: String
+
+
+
+Create a public subnet to make the INSTANCE PUBLIC
+
+OR
+
+Keep that instance, but make another one to be able to connect as bastion
+
+OR
+
+Create an SSManager user
+Also, understand how Roles Work and what the one I created here works
+
+

@@ -1,0 +1,80 @@
+#This is a new template that will automatically create a public EC2 instance
+
+#Steps
+#1. Create a VPC with public subnet
+
+
+
+#################
+####   VPC    ###
+#################
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Example CloudFormation Template with EC2, IAM, and RDS
+
+Resources:
+
+  MyEC2VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub '10.255.0.0/16'
+      EnableDnsHostnames: true #Enable DNS Hostnames for communcation with other resources
+      EnableDnsSupport: true #EnableDnsSupport: true so DNS resolution works inside the VPC
+
+  VpcCidrBlockIpv6:
+    Type: 'AWS::EC2::VPCCidrBlock'
+    Properties:
+      VpcId: !Ref MyEC2VPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  MyVPCSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-west-1a
+      CidrBlock: 10.255.2.0/24 # must be a subnet inside the VPC range
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref MyEC2VPC
+
+  MyVPCSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-west-1c
+      CidrBlock: 10.255.3.0/24 # must be a subnet inside the VPC range
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref MyEC2VPC
+      
+  MyVPCRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyEC2VPC
+  
+  MyVPCRoutes:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref MyVPCRouteTable
+      GatewayId: !Ref MyInternetGateway
+    DependsOn: AttachIGW
+
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyEC2VPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  AssocSubnetRouteTableA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyVPCSubnetA
+      RouteTableId: !Ref MyVPCRouteTable
+
+  AssocSubnetRouteTableC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyVPCSubnetC
+      RouteTableId: !Ref MyVPCRouteTable
+
+      
