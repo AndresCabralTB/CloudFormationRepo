@@ -1,0 +1,70 @@
+#This is a new template that will automatically create a private EC2 Instance 
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Example CloudFormation Template with EC2, IAM, and RDS
+
+Resources:
+
+  MyPrivateVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Sub '10.255.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  VpcCidrBlockIpv6:
+    Type: 'AWS::EC2::VPCCidrBlock'
+    Properties:
+      VpcId: !Ref MyPrivateVPC
+      AmazonProvidedIpv6CidrBlock: true
+
+  MyPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    DependsOn: VpcCidrBlockIpv6
+    Properties:
+      AssignIpv6AddressOnCreation: true
+      AvailabilityZone: us-west-1a
+      Ipv6CidrBlock: !Select [1, !Cidr [!Select [0, !GetAtt 'MyPrivateVPC.Ipv6CidrBlocks'], 256, 64]]
+      CidrBlock: 10.255.0.0/24
+      VpcId: !Ref MyPrivateVPC
+
+  #IAM roles are basically roles that we allow AWS services to have
+  #In this case, we are giving EC2 the role (policy) for Amazon SSM Managegment, which allows it to SSM into an instance
+  MyIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: This is a role for the CloudFormation-EC2
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      MaxSessionDuration: 43200
+      RoleName: RoleForPrivateEC2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+
+  #For AWS Services to access a role, they must be assinged an IAM profile, which we are making now
+  MyIAMProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: PrivateEC2InstanceProfile
+      Roles: 
+        - !Ref MyIAMRole
+
+  MyPrivateEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: 
+      - MyIAMProfile
+      - MyPrivateVPC
+    Properties:
+      ImageId: ami-030cafc5c49b80d00
+      IamInstanceProfile: !Ref MyIAMProfile
+      InstanceType: t2.micro
+      KeyName: Key-pair-4-CloudFormation
+      SubnetId: !Ref MyPrivateSubnet
+
+ 

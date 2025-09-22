@@ -3,8 +3,6 @@
 #Steps
 #1. Create a VPC with public subnet
 
-
-
 #################
 ####   VPC    ###
 #################
@@ -45,7 +43,6 @@ Resources:
     Properties:
       AvailabilityZone: us-west-1c
       CidrBlock: 10.255.3.0/24 # must be a subnet inside the VPC range
-      MapPublicIpOnLaunch: true
       VpcId: !Ref MyEC2VPC
     
   #Create the route table to direct network connections 
@@ -80,12 +77,6 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref MyVPCSubnetA
-      RouteTableId: !Ref MyVPCRouteTable
-
-  AssocSubnetRouteTableC:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref MyVPCSubnetC
       RouteTableId: !Ref MyVPCRouteTable
 
 ##################
@@ -124,6 +115,21 @@ Resources:
             ToPort: 22
       VpcId: !Ref MyEC2VPC
 
+  MyPricateEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: 
+      - MyEC2VPC
+    Properties:
+      GroupDescription: "This Security Group is for the Private EC2 instance"
+      GroupName: "private-ec2-security-group"
+      SecurityGroupIngress: 
+        -   Description: "Only allow conenctions from Bastion"
+            FromPort: 22
+            IpProtocol: tcp
+            ToPort: 22
+            SourceSecurityGroupId: !Ref MyEC2SecurityGroup  
+      VpcId: !Ref MyEC2VPC
+
   #IAM roles are basically roles that we allow AWS services to have
   #In this case, we are giving EC2 the role (policy) for Amazon SSM Managegment, which allows it to SSM into an instance
   MyIAMRole:
@@ -133,7 +139,7 @@ Resources:
       ManagedPolicyArns: 
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       MaxSessionDuration: 43200
-      RoleName: RoleForEC2CloudFormation
+      RoleName: RoleForBastionEC2CloudFormation
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -143,12 +149,33 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - 'sts:AssumeRole'
-
+      Policies:
+          - PolicyName: PolicyToCreateAMI
+            PolicyDocument: {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Sid": "CreateAMI",
+                      "Effect": "Allow",
+                      "Action": [
+                          "ec2:Describe*",
+                          "ec2:CreateSnapshot",
+                          "ec2:CreateImage",
+                          "ec2:CreateTags",
+                          "ec2:DeregisterImage",
+                          "ec2:DeleteSnapshot"
+                      ],
+                      "Resource": "*"
+                  }
+              ]
+            }
+              
+            
   #For AWS Services to access a role, they must be assinged an IAM profile, which we are making now
   MyIAMProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: EC2InstanceProfile
+      InstanceProfileName: BastionEC2InstanceProfile
       Roles: 
         - !Ref MyIAMRole
   #An AWS Systems Manager document (SSM document) defines the actions that Systems Manager performs on your managed instances.
@@ -186,12 +213,95 @@ Resources:
       - MyIAMProfile
       - MySSMDocument
     Properties:
-      ImageId: ami-030cafc5c49b80d00
+      ImageId: ami-0014f8c08bbcad4ca
       IamInstanceProfile: !Ref MyIAMProfile
       InstanceType: t2.micro
       KeyName: Key-pair-4-CloudFormation
       SecurityGroupIds: 
         - !Ref MyEC2SecurityGroup
       SubnetId: !Ref MyVPCSubnetA
+      Tags:
+        - Key: Name
+          Value: bastion-instance-2
 
- 
+  MyInstanceAssociation:
+    Type: AWS::SSM::Association
+    DependsOn:
+      - MySSMDocument
+      - MyPublicEC2Instance
+    Properties:
+      Name: !Ref MySSMDocument             # -Name 'ad-join-domain' in PowerShell
+      Parameters:
+        Message:
+          - "Hello World"
+      Targets:
+        - Key: InstanceIds                 # ← case-sensitive; use "InstanceIds"
+          Values:
+            - !Ref MyPublicEC2Instance     # ← injects the i-... ID at deploy time
+
+  MyPrivateEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-00e93c6f38348c3f1
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref MyIAMProfile
+      KeyName: Key-pair-4-CloudFormation
+      SubnetId: !Ref MyVPCSubnetC
+      SecurityGroupIds: 
+        - !Ref MyPricateEC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: private-instance-2
+
+ # Security group for Interface VPC Endpoints (allow HTTPS from private instances)
+  VpcEndpointSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTPS from private instances to VPC endpoints"
+      VpcId: !Ref MyEC2VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref MyPricateEC2SecurityGroup   # traffic from your private EC2s
+      # (egress optional; endpoints don't usually need it)
+
+  # SSM endpoints required for Session Manager
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyEC2VPC
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref MyVPCSubnetC               # place endpoints in your private subnet(s)
+      SecurityGroupIds:
+        - !Ref VpcEndpointSG
+
+  SsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyEC2VPC
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref MyVPCSubnetC
+      SecurityGroupIds:
+        - !Ref VpcEndpointSG
+
+  Ec2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyEC2VPC
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref MyVPCSubnetC
+      SecurityGroupIds:
+        - !Ref VpcEndpointSG
+
+
+#Next step - Create a Private DB connected to the Private instance

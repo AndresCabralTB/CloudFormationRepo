@@ -193,5 +193,20 @@ Resources:
       SecurityGroupIds: 
         - !Ref MyEC2SecurityGroup
       SubnetId: !Ref MyVPCSubnetA
+  
+  MyInstanceAssociation:
+    Type: AWS::SSM::Association
+    DependsOn:
+      - MySSMDocument
+      - MyPublicEC2Instance
+    Properties:
+      Name: !Ref MySSMDocument             # -Name 'ad-join-domain' in PowerShell
+      Parameters:
+        Message:
+          - "Hello World"
+      Targets:
+        - Key: InstanceIds                 # ← case-sensitive; use "InstanceIds"
+          Values:
+            - !Ref MyPublicEC2Instance     # ← injects the i-... ID at deploy time
 
  
