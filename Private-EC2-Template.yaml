@@ -68,3 +68,44 @@ Resources:
       SubnetId: !Ref MyPrivateSubnet
 
  
+ ###########
+ #An AWS Systems Manager document (SSM document) defines the actions that Systems Manager performs on your managed instances.
+  #You can run the documents, which are usually scripts, through AWS CLI, or the AWS Systems Manager UI
+  #THIS IS NOT NECESSARY TO CONNECT TO AN INSTANCE WITH SYSTEM MANAGER. ALTHOUGH WE CAN ASSOCIATE IT TO THE INSTANCE IF NEEDED
+  MySSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Content: 
+        schemaVersion: "2.2"
+        description: "Document to allow SSM access to EC2 instance"
+        parameters:
+          Message:
+            type: "String"
+            description: "Example parameter"
+            default: "Hello World"
+            allowedValues: 
+            - "Hello World"
+        mainSteps:
+          - action: "aws:runPowerShellScript"
+            name: "example"
+            inputs:
+              timeoutSeconds: '60'
+              runCommand:
+              - "Write-Output {{Message}}"
+      DocumentFormat: YAML
+      DocumentType: Command
+
+  MyInstanceAssociation:
+    Type: AWS::SSM::Association
+    DependsOn:
+      - MySSMDocument
+      - MyPublicEC2Instance
+    Properties:
+      Name: !Ref MySSMDocument             # -Name 'ad-join-domain' in PowerShell
+      Parameters:
+        Message:
+          - "Hello World"
+      Targets:
+        - Key: InstanceIds                 # ← case-sensitive; use "InstanceIds"
+          Values:
+            - !Ref MyPublicEC2Instance     # ← injects the i-... ID at deploy time

@@ -1,14 +1,8 @@
 #This is a new template that will automatically create a public EC2 instance
 
-#Steps
-#1. Create a VPC with public subnet
-
-#################
-####   VPC    ###
-#################
 
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Example CloudFormation Template with EC2, IAM, and RDS
+Description: This Stack will create a Private EC2 Instance with a private RDS and allow connections through a bastion host connected to an internet gateway
 
 Resources:
 
@@ -21,7 +15,7 @@ Resources:
       EnableDnsSupport: true #EnableDnsSupport: true so DNS resolution works inside the VPC
 
   #Resource that creates an Amazon-provided IPv6 
-  #However, this is not needed because we are creating a public VPC that includes public subnets, which provide internet access for your resources.
+  #This is not needed because we are creating a public VPC that includes public subnets, which provide internet access for your resources.
   VpcCidrBlockIpv6:
     Type: 'AWS::EC2::VPCCidrBlock'
     Properties:
@@ -79,21 +73,19 @@ Resources:
       SubnetId: !Ref MyVPCSubnetA
       RouteTableId: !Ref MyVPCRouteTable
 
-##################
-# Now that we created the VPC with two subnets (us-west-1a and us-west-1c), along with the routing tables and the route pointing to the internet gateway, we can move forward by creating the EC2 instance with a public Ipv4
+  # Now that we created the VPC with two subnets (us-west-1a and us-west-1c), along with the routing tables and the route pointing to the internet gateway, we can move forward by creating the EC2 instance with a public Ipv4
+  #This network interface is obsulete because we will be connecting the EC2 to the Internet Gateway in the subnet, so it will be commented out to save resources
+  #MyNetworkInterface:
+  #  Type: AWS::EC2::NetworkInterface
+  #  DependsOn:
+  #    - MyEC2VPC
+  #    - MyVPCSubnetA
+  #  Properties:
+  #    Description: This is the network interfact to allow the EC2 to be public
+  #    PrivateIpAddress: 10.255.2.10
+  #    SubnetId: !Ref MyVPCSubnetA
 
-  #This network interface is obsulete because we will be connecting the EC2 to the Internet Gateway in the subnet 
-  MyNetworkInterface:
-    Type: AWS::EC2::NetworkInterface
-    DependsOn:
-      - MyEC2VPC
-      - MyVPCSubnetA
-    Properties:
-      Description: This is the network interfact to allow the EC2 to be public
-      PrivateIpAddress: 10.255.2.10
-      SubnetId: !Ref MyVPCSubnetA
-
-  #Security group to allow connections from my mac only, but to the rest of the web
+  #Security group to allow connections from my mac only, and to the rest of the web
   MyEC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     DependsOn: 
@@ -115,7 +107,7 @@ Resources:
             ToPort: 22
       VpcId: !Ref MyEC2VPC
 
-  MyPricateEC2SecurityGroup:
+  MyPrivateEC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     DependsOn: 
       - MyEC2VPC
@@ -127,10 +119,16 @@ Resources:
             FromPort: 22
             IpProtocol: tcp
             ToPort: 22
-            SourceSecurityGroupId: !Ref MyEC2SecurityGroup  
+            SourceSecurityGroupId: !Ref MyEC2SecurityGroup   # your bastion SG
+      SecurityGroupEgress: 
+        -   Description: "Outbound rule to anywhere"
+            FromPort: 0
+            IpProtocol: tcp
+            ToPort: 63535
+            CidrIp: 0.0.0.0/0
       VpcId: !Ref MyEC2VPC
 
-  #IAM roles are basically roles that we allow AWS services to have
+  #IAM roles are basically roles that we allow AWS services to have in order to access resources
   #In this case, we are giving EC2 the role (policy) for Amazon SSM Managegment, which allows it to SSM into an instance
   MyIAMRole:
     Type: AWS::IAM::Role
@@ -170,7 +168,6 @@ Resources:
               ]
             }
               
-            
   #For AWS Services to access a role, they must be assinged an IAM profile, which we are making now
   MyIAMProfile:
     Type: AWS::IAM::InstanceProfile
@@ -178,32 +175,8 @@ Resources:
       InstanceProfileName: BastionEC2InstanceProfile
       Roles: 
         - !Ref MyIAMRole
-  #An AWS Systems Manager document (SSM document) defines the actions that Systems Manager performs on your managed instances.
-  #You can run the documents, which are usually scripts, through AWS CLI, or the AWS Systems Manager UI
-  #THIS IS NOT NECESSARY TO CONNECT TO AN INSTANCE WITH SYSTEM MANAGER. ALTHOUGH WE CAN ASSOCIATE IT TO THE INSTANCE IF NEEDED
-  MySSMDocument:
-    Type: AWS::SSM::Document
-    Properties:
-      Content: 
-        schemaVersion: "2.2"
-        description: "Document to allow SSM access to EC2 instance"
-        parameters:
-          Message:
-            type: "String"
-            description: "Example parameter"
-            default: "Hello World"
-            allowedValues: 
-            - "Hello World"
-        mainSteps:
-          - action: "aws:runPowerShellScript"
-            name: "example"
-            inputs:
-              timeoutSeconds: '60'
-              runCommand:
-              - "Write-Output {{Message}}"
-      DocumentFormat: YAML
-      DocumentType: Command
-
+        
+  #Creating the public instance connected to the subnet with the internet gateway connection
   MyPublicEC2Instance:
     Type: AWS::EC2::Instance
     DependsOn: 
@@ -211,9 +184,8 @@ Resources:
       - MyEC2SecurityGroup
       - MyVPCSubnetA
       - MyIAMProfile
-      - MySSMDocument
     Properties:
-      ImageId: ami-0014f8c08bbcad4ca
+      ImageId: ami-0c438b3129bba37c1
       IamInstanceProfile: !Ref MyIAMProfile
       InstanceType: t2.micro
       KeyName: Key-pair-4-CloudFormation
@@ -224,31 +196,17 @@ Resources:
         - Key: Name
           Value: bastion-instance-2
 
-  MyInstanceAssociation:
-    Type: AWS::SSM::Association
-    DependsOn:
-      - MySSMDocument
-      - MyPublicEC2Instance
-    Properties:
-      Name: !Ref MySSMDocument             # -Name 'ad-join-domain' in PowerShell
-      Parameters:
-        Message:
-          - "Hello World"
-      Targets:
-        - Key: InstanceIds                 # ← case-sensitive; use "InstanceIds"
-          Values:
-            - !Ref MyPublicEC2Instance     # ← injects the i-... ID at deploy time
-
+  #Creating the Private EC2 Instance connected to the private subnet
   MyPrivateEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-00e93c6f38348c3f1
+      ImageId: ami-0514a75f6d0e30391
       InstanceType: t2.micro
       IamInstanceProfile: !Ref MyIAMProfile
       KeyName: Key-pair-4-CloudFormation
       SubnetId: !Ref MyVPCSubnetC
       SecurityGroupIds: 
-        - !Ref MyPricateEC2SecurityGroup
+        - !Ref MyPrivateEC2SecurityGroup
       Tags:
         - Key: Name
           Value: private-instance-2
@@ -263,45 +221,300 @@ Resources:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          SourceSecurityGroupId: !Ref MyPricateEC2SecurityGroup   # traffic from your private EC2s
+          SourceSecurityGroupId: !Ref MyPrivateEC2SecurityGroup   # traffic from your private EC2s
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref MyEC2SecurityGroup
       # (egress optional; endpoints don't usually need it)
 
+  #Create the DB Instance Role to allow access to RDS - I got this from AWS
+  MyDBInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: "This is the IAM role for the RDS"
+      RoleName: "RDS-Role"
+      AssumeRolePolicyDocument: {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "rds.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                }
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+      Policies: 
+        - PolicyName: Policy-For-RDSCluster-CloudFormation
+          PolicyDocument: {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Sid": "CrossRegionCommunication",
+                      "Effect": "Allow",
+                      "Action": [
+                          "rds:CrossRegionCommunication"
+                      ],
+                      "Resource": "*"
+                  },
+                  {
+                      "Sid": "Ec2",
+                      "Effect": "Allow",
+                      "Action": [
+                          "ec2:AllocateAddress",
+                          "ec2:AssociateAddress",
+                          "ec2:AuthorizeSecurityGroupIngress",
+                          "ec2:CreateCoipPoolPermission",
+                          "ec2:CreateLocalGatewayRouteTablePermission",
+                          "ec2:CreateNetworkInterface",
+                          "ec2:CreateSecurityGroup",
+                          "ec2:DeleteCoipPoolPermission",
+                          "ec2:DeleteLocalGatewayRouteTablePermission",
+                          "ec2:DeleteNetworkInterface",
+                          "ec2:DeleteSecurityGroup",
+                          "ec2:DescribeAddresses",
+                          "ec2:DescribeAvailabilityZones",
+                          "ec2:DescribeCoipPools",
+                          "ec2:DescribeInternetGateways",
+                          "ec2:DescribeLocalGatewayRouteTablePermissions",
+                          "ec2:DescribeLocalGatewayRouteTables",
+                          "ec2:DescribeLocalGatewayRouteTableVpcAssociations",
+                          "ec2:DescribeLocalGateways",
+                          "ec2:DescribeSecurityGroups",
+                          "ec2:DescribeSubnets",
+                          "ec2:DescribeVpcAttribute",
+                          "ec2:DescribeVpcs",
+                          "ec2:DisassociateAddress",
+                          "ec2:ModifyNetworkInterfaceAttribute",
+                          "ec2:ModifyVpcEndpoint",
+                          "ec2:ReleaseAddress",
+                          "ec2:RevokeSecurityGroupIngress",
+                          "ec2:CreateVpcEndpoint",
+                          "ec2:DescribeVpcEndpoints",
+                          "ec2:DeleteVpcEndpoints",
+                          "ec2:AssignPrivateIpAddresses",
+                          "ec2:UnassignPrivateIpAddresses"
+                      ],
+                      "Resource": "*"
+                  },
+                  {
+                      "Sid": "CloudWatchLogs",
+                      "Effect": "Allow",
+                      "Action": [
+                          "logs:CreateLogGroup"
+                      ],
+                      "Resource": [
+                          "arn:aws:logs:*:*:log-group:/aws/rds/*",
+                          "arn:aws:logs:*:*:log-group:/aws/docdb/*",
+                          "arn:aws:logs:*:*:log-group:/aws/neptune/*"
+                      ]
+                  },
+                  {
+                      "Sid": "CloudWatchStreams",
+                      "Effect": "Allow",
+                      "Action": [
+                          "logs:CreateLogStream",
+                          "logs:PutLogEvents",
+                          "logs:DescribeLogStreams"
+                      ],
+                      "Resource": [
+                          "arn:aws:logs:*:*:log-group:/aws/rds/*:log-stream:*",
+                          "arn:aws:logs:*:*:log-group:/aws/docdb/*:log-stream:*",
+                          "arn:aws:logs:*:*:log-group:/aws/neptune/*:log-stream:*"
+                      ]
+                  },
+                  {
+                      "Sid": "Kinesis",
+                      "Effect": "Allow",
+                      "Action": [
+                          "kinesis:CreateStream",
+                          "kinesis:PutRecord",
+                          "kinesis:PutRecords",
+                          "kinesis:DescribeStream",
+                          "kinesis:SplitShard",
+                          "kinesis:MergeShards",
+                          "kinesis:DeleteStream",
+                          "kinesis:UpdateShardCount"
+                      ],
+                      "Resource": [
+                          "arn:aws:kinesis:*:*:stream/aws-rds-das-*"
+                      ]
+                  },
+                  {
+                      "Sid": "CloudWatch",
+                      "Effect": "Allow",
+                      "Action": [
+                          "cloudwatch:PutMetricData"
+                      ],
+                      "Resource": "*",
+                      "Condition": {
+                          "StringEquals": {
+                              "cloudwatch:namespace": [
+                                  "AWS/DocDB",
+                                  "AWS/Neptune",
+                                  "AWS/RDS",
+                                  "AWS/Usage"
+                              ]
+                          }
+                      }
+                  },
+                  {
+                      "Sid": "SecretsManagerPassword",
+                      "Effect": "Allow",
+                      "Action": [
+                          "secretsmanager:GetRandomPassword"
+                      ],
+                      "Resource": "*"
+                  },
+                  {
+                      "Sid": "SecretsManagerSecret",
+                      "Effect": "Allow",
+                      "Action": [
+                          "secretsmanager:DeleteSecret",
+                          "secretsmanager:DescribeSecret",
+                          "secretsmanager:PutSecretValue",
+                          "secretsmanager:RotateSecret",
+                          "secretsmanager:UpdateSecret",
+                          "secretsmanager:UpdateSecretVersionStage",
+                          "secretsmanager:ListSecretVersionIds"
+                      ],
+                      "Resource": [
+                          "arn:aws:secretsmanager:*:*:secret:rds!*"
+                      ],
+                      "Condition": {
+                          "StringLike": {
+                              "secretsmanager:ResourceTag/aws:secretsmanager:owningService": "rds"
+                          }
+                      }
+                  },
+                  {
+                      "Sid": "SecretsManagerTags",
+                      "Effect": "Allow",
+                      "Action": "secretsmanager:TagResource",
+                      "Resource": "arn:aws:secretsmanager:*:*:secret:rds!*",
+                      "Condition": {
+                          "ForAllValues:StringEquals": {
+                              "aws:TagKeys": [
+                                  "aws:rds:primaryDBInstanceArn",
+                                  "aws:rds:primaryDBClusterArn"
+                              ]
+                          },
+                          "StringLike": {
+                              "secretsmanager:ResourceTag/aws:secretsmanager:owningService": "rds"
+                          }
+                      }
+                  }
+              ]
+          }
+
+      Tags: 
+        - Key: Name
+          Value: RoleForRDSCluster
+
+  #Create a security group that only allows connections from the private EC2 Instance
+  MyRDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn:
+      - MyPrivateEC2SecurityGroup
+    Properties:
+      GroupDescription: "RDS Security Group"
+      GroupName: rds-security-group
+      SecurityGroupIngress: 
+        - SourceSecurityGroupId: !Ref MyPrivateEC2SecurityGroup
+          Description: "Only allow conenctions from Allow connections from SSH "
+          FromPort: 3306
+          IpProtocol: tcp
+          ToPort: 3306
+      VpcId: !Ref MyEC2VPC
+
+  #Create the subnet of the RDS to host it
+  MyRDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: This is the RDS Subnet Groupt
+      DBSubnetGroupName: RDSSubnetGroup
+      SubnetIds: 
+        - !Ref MyVPCSubnetC
+        - !Ref MyVPCSubnetA
+      Tags: 
+        - Key: Name
+          Value: RDS-Subnet-Group
+
+  #Create the RDS Instance with the subnet, instance role, and security groups assigned
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: 
+      - MyVPCSubnetC
+      - MyDBInstanceRole
+      - MyRDSSecurityGroup
+    Properties:
+      AllocatedStorage: 20
+      AutoMinorVersionUpgrade: false
+      DBName: CloudFormationDB
+      DBInstanceClass: db.t3.micro
+      DBSubnetGroupName: !Ref MyRDSSubnetGroup
+      DomainIAMRoleName: !Ref MyDBInstanceRole
+      Engine: mysql
+      MasterUsername: acabralreyes
+      MasterUserPassword: CleopatraSJFD1.
+      MultiAZ: false
+      NetworkType: IPV4
+      Port: 3306
+      PubliclyAccessible: false
+      StorageType: gp3
+      Tags: 
+        - Key: Name
+          Value: RDS-Instance
+      VPCSecurityGroups:
+        - !Ref MyRDSSecurityGroup
+
   # SSM endpoints required for Session Manager
-  SsmEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref MyEC2VPC
-      VpcEndpointType: Interface
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref MyVPCSubnetC               # place endpoints in your private subnet(s)
-      SecurityGroupIds:
-        - !Ref VpcEndpointSG
+  # This will be commented out to save resources and because the AMI already have Session Manager Configured
+  #SsmEndpoint:
+  #  Type: AWS::EC2::VPCEndpoint
+  #  Properties:
+  #    VpcId: !Ref MyEC2VPC
+  #    VpcEndpointType: Interface
+  #    ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+  #    PrivateDnsEnabled: true
+  #    SubnetIds:
+  #      - !Ref MyVPCSubnetC               # place endpoints in your private subnet(s)
+  #      - !Ref MyVPCSubnetA
+  #    SecurityGroupIds:
+  #      - !Ref VpcEndpointSG
 
-  SsmMessagesEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref MyEC2VPC
-      VpcEndpointType: Interface
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref MyVPCSubnetC
-      SecurityGroupIds:
-        - !Ref VpcEndpointSG
+  # SSM endpoints required for Session Manager
+  # This will be commented out to save resources
+  #SsmMessagesEndpoint:
+  #  Type: AWS::EC2::VPCEndpoint
+  #  Properties:
+  #    VpcId: !Ref MyEC2VPC
+  #    VpcEndpointType: Interface
+  #    ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+  #    PrivateDnsEnabled: true
+  #    SubnetIds:
+  #      - !Ref MyVPCSubnetC
+  #      - !Ref MyVPCSubnetA
+  #    SecurityGroupIds:
+  #      - !Ref VpcEndpointSG
 
-  Ec2MessagesEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcId: !Ref MyEC2VPC
-      VpcEndpointType: Interface
-      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref MyVPCSubnetC
-      SecurityGroupIds:
-        - !Ref VpcEndpointSG
-
-
-#Next step - Create a Private DB connected to the Private instance
+  #Ec2MessagesEndpoint:
+  #  Type: AWS::EC2::VPCEndpoint
+  #  Properties:
+  #    VpcId: !Ref MyEC2VPC
+  #    VpcEndpointType: Interface
+  #    ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+  #    PrivateDnsEnabled: true
+  #    SubnetIds:
+  #      - !Ref MyVPCSubnetC
+  #      - !Ref MyVPCSubnetA
+  #    SecurityGroupIds:
+  #      - !Ref VpcEndpointSG
